@@ -1,0 +1,39 @@
+# OpenCode evaluator runtime data
+runs/*
+!runs/.gitkeep
+
+# Exported sessions can contain source code, prompts, secrets, and user data.
+# Ignore every session location, not only sessions/raw/.
+sessions/*
+!sessions/raw/
+sessions/raw/*
+!sessions/raw/.gitkeep
+
+# Stray session exports: root-level json (no legit root .json files exist here)
+# and OpenCode-style ids (ses_*) anywhere
+/*.json
+ses_*.json
+
+# Target prompts may be sensitive; only the example template is tracked
+prompts/targets/*
+!prompts/targets/example/
+
+# OpenCode tool runtime dependencies
+.opencode/node_modules/
+
+# Python caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.coverage
+
+# Local/editor noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Optional local notes / overrides
+*.local.json
+*.local.jsonc
