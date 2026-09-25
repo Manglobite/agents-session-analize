@@ -1,6 +1,3 @@
-// OpenCode resolves this package in its tool runtime. A standalone project does not
-// need to install it just to keep project-local tools under `.opencode/tools`.
-// @ts-expect-error Provided by the OpenCode tool runtime.
 import { tool } from "@opencode-ai/plugin"
 
 type ToolContext = {
@@ -11,6 +8,7 @@ type PrepareArgs = {
   session_path: string
   orchestrator_prompt?: string
   subagent_prompts?: string[]
+  child_export_paths?: string[]
   chunk_chars?: number
   run_name?: string
 }
@@ -74,11 +72,13 @@ function getBun(): BunRuntime {
 }
 
 const RUN_PYTHON_TIMEOUT_MS = 120_000
+const RUN_PREPARE_TIMEOUT_MS = 1_200_000
 
 async function runPython(
   context: ToolContext,
   scriptName: string,
   input: Record<string, unknown>,
+  timeoutMs: number,
 ): Promise<string> {
   const scriptPath = projectPath(context.worktree, "scripts", "session_eval", scriptName)
   const proc = getBun().spawn(["python3", scriptPath], {
@@ -95,7 +95,7 @@ async function runPython(
   const timer = setTimeout(() => {
     timedOut = true
     proc.kill()
-  }, RUN_PYTHON_TIMEOUT_MS)
+  }, timeoutMs)
 
   try {
     const [output, stderr] = await Promise.all([
@@ -104,9 +104,15 @@ async function runPython(
     ])
     await proc.exited
     if (timedOut) {
-      throw new Error(`${scriptName} timed out after ${RUN_PYTHON_TIMEOUT_MS} ms`)
+      throw new Error(`${scriptName} timed out after ${timeoutMs} ms`)
     }
     if (proc.exitCode === 0) return output.trimEnd()
+    if (output.trim()) {
+      try {
+        const result = JSON.parse(output)
+        if (result && typeof result === "object" && result.ok === false) return output.trimEnd()
+      } catch {}
+    }
     throw new Error(stderr.trim() || output.trim() || `${scriptName} exited with code ${proc.exitCode}`)
   } finally {
     clearTimeout(timer)
@@ -115,20 +121,31 @@ async function runPython(
 
 export const prepare = tool({
   description:
-    "Prepare an exported OpenCode session for evaluation. Deterministically copies inputs into a run, normalizes messages/parts, extracts tool events, and creates semantic chunks. Use this first.",
+    "Prepare an OpenCode session for evaluation. Accepts a session export file or a session folder; the Python core scans a folder for session exports, auto-selects the root session, and returns structured ambiguity or error for the controller to ask the user. Deterministically copies inputs into a run, normalizes messages/parts, extracts tool events, and creates semantic chunks. Child session exports are discovered recursively from task metadata (sessionId) and auto-exported via the opencode CLI into the same session folder, so the reviewer sees the full session tree. Agent definition files referenced by the orchestrator prompt are searched alongside it or relative to the project root. Unmatched agent prompts and missing child exports are reported for the controller to ask the user. See https://opencode.ai/docs/cli/ for `opencode export` and https://opencode.ai/docs/sdk/ for `session.children`; the CLI export does not bundle descendant sessions. Use this first.",
   args: {
     session_path: tool.schema
       .string()
-      .describe("Project-relative path to an OpenCode JSON export, normally sessions/raw/<file>.json"),
+      .describe(
+        "Project-relative path to an OpenCode session export file (JSON or Markdown) or a session folder, normally sessions/raw/<file>.json or sessions/raw/<folder>. A folder is scanned for session exports and the root session is auto-selected; if multiple roots are found the tool reports ambiguity. A Markdown export (.md) is auto re-exported as JSON via the opencode CLI using the session id found in its header",
+      ),
     orchestrator_prompt: tool.schema
       .string()
       .optional()
-      .describe("Optional project-relative path to the orchestrator prompt being evaluated"),
+      .describe(
+        "Optional project-relative path to the orchestrator prompt file, or a target folder: orchestrator.md (or a single top-level .md) plus subagents/*.md are picked up automatically",
+      ),
     subagent_prompts: tool.schema
       .array(tool.schema.string())
       .optional()
       .default([])
-      .describe("Optional project-relative paths to relevant subagent prompts being evaluated"),
+      .describe("Optional project-relative paths to relevant subagent prompt files; a folder expands to its .md files"),
+    child_export_paths: tool.schema
+      .array(tool.schema.string())
+      .optional()
+      .default([])
+      .describe(
+        "Optional explicit project-relative paths to child session exports. Child sessions are also discovered automatically from task tool metadata (sessionId) and auto-exported via the opencode CLI into the same session folder",
+      ),
     chunk_chars: tool.schema
       .number()
       .optional()
@@ -141,7 +158,7 @@ export const prepare = tool({
   },
   async execute(args: PrepareArgs, context: ToolContext) {
     try {
-      return await runPython(context, "prepare.py", args)
+      return await runPython(context, "prepare.py", args, RUN_PREPARE_TIMEOUT_MS)
     } catch (error) {
       return JSON.stringify({ ok: false, error: formatError(error) })
     }
@@ -158,7 +175,7 @@ export const store_summary = tool({
   },
   async execute(args: StoreSummaryArgs, context: ToolContext) {
     try {
-      return await runPython(context, "store_summary.py", args)
+      return await runPython(context, "store_summary.py", args, RUN_PYTHON_TIMEOUT_MS)
     } catch (error) {
       return JSON.stringify({ ok: false, error: formatError(error) })
     }
@@ -167,13 +184,13 @@ export const store_summary = tool({
 
 export const build_map = tool({
   description:
-    "Build the compact session map after all required SLM summaries have been stored. Computes deterministic counts/findings and writes JSON plus human-readable Markdown.",
+    "Build the compact session map after all required SLM summaries have been stored. Computes deterministic counts/findings and writes JSON plus human-readable Markdown. The map covers the full session tree, including every discovered child session.",
   args: {
     run_id: tool.schema.string().describe("Run identifier returned by session_eval_prepare"),
   },
   async execute(args: BuildMapArgs, context: ToolContext) {
     try {
-      return await runPython(context, "build_map.py", args)
+      return await runPython(context, "build_map.py", args, RUN_PYTHON_TIMEOUT_MS)
     } catch (error) {
       return JSON.stringify({ ok: false, error: formatError(error) })
     }
@@ -189,7 +206,7 @@ export const finalize = tool({
   },
   async execute(args: FinalizeArgs, context: ToolContext) {
     try {
-      return await runPython(context, "finalize.py", args)
+      return await runPython(context, "finalize.py", args, RUN_PYTHON_TIMEOUT_MS)
     } catch (error) {
       return JSON.stringify({ ok: false, error: formatError(error) })
     }

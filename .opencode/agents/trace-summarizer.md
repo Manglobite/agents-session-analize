@@ -1,13 +1,14 @@
 ---
 description: Internal low-cost semantic compressor for one prepared session chunk at a time.
 mode: subagent
+model: gate/codex-luna-6
 hidden: true
-temperature: 0
 permission:
   "*": deny
   read:
     "*": deny
     "runs/**/chunks/*.json": allow
+    "**/runs/**/chunks/*.json": allow
 ---
 
 You compress exactly one prepared session chunk. You are not an evaluator and must not judge whether the agent behaved well or badly.

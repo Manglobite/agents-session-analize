@@ -14,9 +14,15 @@ sessions/raw/*
 /*.json
 ses_*.json
 
-# Target prompts may be sensitive; only the example template is tracked
+# Target prompts may be sensitive; only the explicit example files are tracked
 prompts/targets/*
 !prompts/targets/example/
+prompts/targets/example/*
+!prompts/targets/example/orchestrator.md
+!prompts/targets/example/subagents/
+prompts/targets/example/subagents/*
+!prompts/targets/example/subagents/.gitkeep
+!prompts/targets/example/subagents/README.md
 
 # OpenCode tool runtime dependencies
 .opencode/node_modules/
